@@ -1,0 +1,2 @@
+# Ignorar variables locales por entorno
+/infra/terraform/terraform.tfvars
