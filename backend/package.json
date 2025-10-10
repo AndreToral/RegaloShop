@@ -1,0 +1,31 @@
+{
+  "name": "regaloshop-backend",
+  "version": "1.0.0",
+  "description": "API para tienda de regalos y ropa",
+  "main": "src/server.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "nodemon src/server.js",
+    "db:seed": "node scripts/seedDatabase.js",
+    "db:migrate": "node scripts/runMigrations.js",
+    "db:reseed": "node scripts/seedDatabase.js --truncate --with-orders"
+  },
+  "keywords": [
+    "ecommerce",
+    "regalos",
+    "ropa"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "cors": "^2.8.5",
+    "express": "^4.19.2",
+    "dotenv": "^16.4.5",
+    "pg": "^8.11.5",
+    "uuid": "^9.0.1"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.0"
+  }
+}
