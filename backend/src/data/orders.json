@@ -1,0 +1,32 @@
+[
+  {
+    "id": "52e8ccf1-db89-4dc6-88ec-62c5df795670",
+    "createdAt": "2025-10-04T16:59:07.816Z",
+    "customer": {
+      "name": "Luis Gallardo",
+      "email": "alexyair2019@gmail.com",
+      "address": "Cerro de pasco #173 Aranjuez\nCasa"
+    },
+    "items": [
+      {
+        "productId": "gift-craft-kit",
+        "name": "Kit de Manualidades Creativas",
+        "price": 28.5,
+        "quantity": 1,
+        "subtotal": 28.5
+      },
+      {
+        "productId": "gift-coffee-kit",
+        "name": "Kit Cafetero Artesanal",
+        "price": 42.5,
+        "quantity": 1,
+        "subtotal": 42.5
+      }
+    ],
+    "subtotal": 71,
+    "shippingCost": 6.99,
+    "total": 77.99,
+    "notes": "",
+    "status": "pending"
+  }
+]

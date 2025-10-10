@@ -1,0 +1,159 @@
+[
+  {
+    "id": "gift-rosebox",
+    "name": "Caja de Rosas Preservadas",
+    "description": "Arreglo premium con rosas preservadas y luces c�lidas, ideal para ocasiones especiales.",
+    "category": "Regalos",
+    "price": 59.99,
+    "stock": 12,
+    "image": "/images/rose-box.svg",
+    "tags": [
+      "detalles",
+      "romantico",
+      "premium"
+    ]
+  },
+  {
+    "id": "gift-coffee-kit",
+    "name": "Kit Cafetero Artesanal",
+    "description": "Caja regalo con caf� especialidad, taza personalizada y galletas gourmet.",
+    "category": "Regalos",
+    "price": 42.5,
+    "stock": 19,
+    "image": "/images/coffee-kit.svg",
+    "tags": [
+      "gourmet",
+      "cafetero"
+    ]
+  },
+  {
+    "id": "gift-spa-set",
+    "name": "Set Spa Relajante",
+    "description": "Incluye velas arom�ticas, sales de ba�o y aceite esencial calmante.",
+    "category": "Regalos",
+    "price": 35,
+    "stock": 18,
+    "image": "/images/spa-set.svg",
+    "tags": [
+      "bienestar",
+      "hogar"
+    ]
+  },
+  {
+    "id": "gift-cheese-board",
+    "name": "Tabla de Quesos Deluxe",
+    "description": "Tabla de bamb� con quesos artesanales, frutos secos y miel org�nica.",
+    "category": "Regalos",
+    "price": 48.75,
+    "stock": 10,
+    "image": "/images/cheese-board.svg",
+    "tags": [
+      "gourmet",
+      "compartir"
+    ]
+  },
+  {
+    "id": "clothes-knit-sweater",
+    "name": "Su�ter Tejido Unisex",
+    "description": "Su�ter tejido a mano con mezcla de lana y algod�n, disponible en varios colores.",
+    "category": "Ropa",
+    "price": 65,
+    "stock": 15,
+    "image": "/images/knit-sweater.svg",
+    "tags": [
+      "invierno",
+      "tejido"
+    ]
+  },
+  {
+    "id": "clothes-linen-shirt",
+    "name": "Camisa de Lino Fresca",
+    "description": "Camisa ligera de lino 100%, ideal para climas c�lidos.",
+    "category": "Ropa",
+    "price": 54.99,
+    "stock": 25,
+    "image": "/images/linen-shirt.svg",
+    "tags": [
+      "verano",
+      "casual"
+    ]
+  },
+  {
+    "id": "clothes-denim-jacket",
+    "name": "Chaqueta Denim Vintage",
+    "description": "Chaqueta de mezclilla estilo retro con detalles bordados.",
+    "category": "Ropa",
+    "price": 79.5,
+    "stock": 8,
+    "image": "/images/denim-jacket.svg",
+    "tags": [
+      "urbano",
+      "clasico"
+    ]
+  },
+  {
+    "id": "clothes-flowy-dress",
+    "name": "Vestido Floreado Midi",
+    "description": "Vestido midi con estampado floral y corte c�modo.",
+    "category": "Ropa",
+    "price": 68,
+    "stock": 12,
+    "image": "/images/flowy-dress.svg",
+    "tags": [
+      "verano",
+      "casual"
+    ]
+  },
+  {
+    "id": "gift-craft-kit",
+    "name": "Kit de Manualidades Creativas",
+    "description": "Materiales y tutoriales para crear proyectos DIY personalizados.",
+    "category": "Regalos",
+    "price": 28.5,
+    "stock": 29,
+    "image": "/images/craft-kit.svg",
+    "tags": [
+      "manualidades",
+      "familia"
+    ]
+  },
+  {
+    "id": "clothes-yoga-set",
+    "name": "Set Deportivo Yoga",
+    "description": "Conjunto deportivo transpirable, ideal para yoga y pilates.",
+    "category": "Ropa",
+    "price": 49.99,
+    "stock": 22,
+    "image": "/images/yoga-set.svg",
+    "tags": [
+      "deporte",
+      "comodo"
+    ]
+  },
+  {
+    "id": "gift-tea-collection",
+    "name": "Colecci�n de T�s del Mundo",
+    "description": "Selecci�n de t�s premium con infusor reutilizable.",
+    "category": "Regalos",
+    "price": 38.5,
+    "stock": 16,
+    "image": "/images/tea-collection.svg",
+    "tags": [
+      "gourmet",
+      "relax"
+    ]
+  },
+  {
+    "id": "clothes-cozy-scarf",
+    "name": "Bufanda Suave de Cashmere",
+    "description": "Bufanda tejida en cashmere con acabado extra suave.",
+    "category": "Ropa",
+    "price": 45,
+    "stock": 18,
+    "image": "/images/cozy-scarf.svg",
+    "tags": [
+      "invierno",
+      "accesorio"
+    ]
+  }
+]
