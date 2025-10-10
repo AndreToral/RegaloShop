@@ -1,0 +1,134 @@
+---
+- name: Publicar imágenes en ECR (sin Terraform)
+  hosts: localhost
+  gather_facts: false
+  vars:
+    repo_root: "{{ playbook_dir }}/../.."
+    project_name: "tienda"
+    region: "us-east-1"
+    frontend_api_url: "/api"
+    frontend_image_tag: "tienda-frontend-latest"
+    backend_image_tag: "tienda-backend-latest"
+    update_ecs: "no"
+    ecs_cluster_name: ""
+    ecs_service_frontend: "{{ project_name }}-frontend"
+    ecs_service_backend: "{{ project_name }}-backend"
+  tasks:
+    # Se asume autenticación AWS disponible en el entorno (perfil/SSO/rol)
+
+    - name: Obtener ID de cuenta AWS
+      ansible.builtin.command: aws sts get-caller-identity --query Account --output text
+      register: aws_account_id
+      changed_when: false
+      environment:
+        AWS_DEFAULT_REGION: "{{ region }}"
+
+    - name: Definir URL del registro ECR
+      ansible.builtin.set_fact:
+        ecr_registry: "{{ aws_account_id.stdout }}.dkr.ecr.{{ region }}.amazonaws.com"
+
+    - name: Definir entorno base para AWS CLI
+      ansible.builtin.set_fact:
+        aws_env:
+          AWS_DEFAULT_REGION: "{{ region }}"
+
+    - name: Definir URLs de repos ECR
+      ansible.builtin.set_fact:
+        ecr_frontend_url: "{{ ecr_registry }}/{{ project_name }}-frontend"
+        ecr_backend_url:  "{{ ecr_registry }}/{{ project_name }}-backend"
+
+    - name: Asegurar repositorio ECR FRONTEND
+      ansible.builtin.command: >-
+        aws ecr describe-repositories --repository-names {{ project_name }}-frontend
+      environment:
+        AWS_DEFAULT_REGION: "{{ region }}"
+      register: ecr_frontend_exists
+      failed_when: false
+      changed_when: false
+
+    - name: Crear repositorio ECR FRONTEND si no existe
+      ansible.builtin.command: >-
+        aws ecr create-repository --repository-name {{ project_name }}-frontend
+      environment:
+        AWS_DEFAULT_REGION: "{{ region }}"
+      when: ecr_frontend_exists.rc != 0
+
+    - name: Asegurar repositorio ECR BACKEND
+      ansible.builtin.command: >-
+        aws ecr describe-repositories --repository-names {{ project_name }}-backend
+      environment:
+        AWS_DEFAULT_REGION: "{{ region }}"
+      register: ecr_backend_exists
+      failed_when: false
+      changed_when: false
+
+    - name: Crear repositorio ECR BACKEND si no existe
+      ansible.builtin.command: >-
+        aws ecr create-repository --repository-name {{ project_name }}-backend
+      environment:
+        AWS_DEFAULT_REGION: "{{ region }}"
+      when: ecr_backend_exists.rc != 0
+
+    - name: Iniciar sesión en Amazon ECR
+      ansible.builtin.shell: |
+        aws ecr get-login-password --region {{ region }} |
+        docker login --username AWS --password-stdin {{ ecr_registry }}
+      changed_when: false
+      environment:
+        AWS_DEFAULT_REGION: "{{ region }}"
+
+    - name: Construir imagen Docker del frontend
+      ansible.builtin.command: >-
+        docker build -t frontend:{{ frontend_image_tag }}
+        -f frontend/Dockerfile
+        --build-arg VITE_API_URL={{ frontend_api_url }}
+        frontend
+      args:
+        chdir: "{{ repo_root }}"
+
+    - name: Etiquetar y subir imagen del frontend a ECR
+      ansible.builtin.shell: |
+        docker tag frontend:{{ frontend_image_tag }} {{ ecr_frontend_url }}:{{ frontend_image_tag }}
+        docker push {{ ecr_frontend_url }}:{{ frontend_image_tag }}
+      args:
+        chdir: "{{ repo_root }}"
+      environment:
+        AWS_DEFAULT_REGION: "{{ region }}"
+
+    - name: Construir imagen Docker del backend
+      ansible.builtin.command: >-
+        docker build -t backend:{{ backend_image_tag }}
+        -f backend/Dockerfile
+        backend
+      args:
+        chdir: "{{ repo_root }}"
+
+    - name: Etiquetar y subir imagen del backend a ECR
+      ansible.builtin.shell: |
+        docker tag backend:{{ backend_image_tag }} {{ ecr_backend_url }}:{{ backend_image_tag }}
+        docker push {{ ecr_backend_url }}:{{ backend_image_tag }}
+      args:
+        chdir: "{{ repo_root }}"
+      environment: "{{ aws_env }}"
+
+    - name: Desplegar nueva revisión en ECS (frontend)
+      ansible.builtin.command: >-
+        aws ecs update-service
+        --cluster {{ ecs_cluster_name }}
+        --service {{ ecs_service_frontend }}
+        --task-definition {{ ecs_service_frontend }}
+        --force-new-deployment
+      environment: "{{ aws_env }}"
+      changed_when: true
+      when: (update_ecs | lower) == 'si' or (update_ecs | lower) == 'sí'
+
+    - name: Desplegar nueva revisión en ECS (backend)
+      ansible.builtin.command: >-
+        aws ecs update-service
+        --cluster {{ ecs_cluster_name }}
+        --service {{ ecs_service_backend }}
+        --task-definition {{ ecs_service_backend }}
+        --force-new-deployment
+      environment: "{{ aws_env }}"
+      changed_when: true
+      when: (update_ecs | lower) == 'si' or (update_ecs | lower) == 'sí'
