@@ -1,0 +1,130 @@
+name: CD - Terraform Deploy/Destroy
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: deploy | destroy (solo Terraform)
+        required: true
+        type: choice
+        default: deploy
+        options:
+          - deploy
+          - destroy
+      environment:
+        description: Nombre del ambiente (usa un Environment para inyectar secrets/vars)
+        required: true
+        default: prod
+      terraform_action:
+        description: Ejecutar Terraform (plan/apply) cuando action=deploy
+        required: true
+        type: choice
+        default: apply
+        options:
+          - plan
+          - apply
+      destroy_confirm:
+        description: Escribe DESTROY para confirmar destrucción (solo si action=destroy)
+        required: true
+        default: CANCEL
+
+env:
+  AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
+  IMAGE_TAG: ${{ github.sha }}
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: terraform-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  terraform:
+    name: Terraform ${{ github.event.inputs.action }}
+    runs-on: ubuntu-latest
+    environment: ${{ github.event.inputs.environment }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Escribir terraform.tfvars (secret opcional)
+        working-directory: infra/terraform
+        env:
+          TERRAFORM_TFVARS: ${{ secrets.TERRAFORM_TFVARS }}
+        run: |
+          if [ -n "$TERRAFORM_TFVARS" ]; then
+            # Usa el contenido multilinea del secret para generar el tfvars en el runner
+            printf "%s" "$TERRAFORM_TFVARS" > terraform.tfvars
+            echo "terraform.tfvars escrito desde secret TERRAFORM_TFVARS"
+          elif [ ! -f terraform.tfvars ]; then
+            echo "No se encontró terraform.tfvars y no se definió el secret TERRAFORM_TFVARS."
+            echo "Crea el archivo en el repo o añade el secret con su contenido."
+            exit 1
+          else
+            echo "Usando terraform.tfvars del repo"
+          fi
+
+      - name: Validar confirmación de destroy
+        if: github.event.inputs.action == 'destroy'
+        run: |
+          if [ "${{ github.event.inputs.destroy_confirm }}" != "DESTROY" ]; then
+            echo "Debes escribir DESTROY en el input destroy_confirm para continuar."
+            exit 1
+          fi
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.6.6
+
+      - name: Terraform init
+        working-directory: infra/terraform
+        run: terraform init -input=false
+
+      - name: Terraform validate
+        working-directory: infra/terraform
+        run: terraform validate
+
+      - name: Terraform plan (deploy)
+        if: github.event.inputs.action == 'deploy'
+        working-directory: infra/terraform
+        env:
+          TF_VAR_region: ${{ env.AWS_REGION }}
+          TF_VAR_frontend_image_tag: ${{ env.IMAGE_TAG }}
+          TF_VAR_backend_image_tag: ${{ env.IMAGE_TAG }}
+        run: terraform plan -input=false -out=tfplan
+
+      - name: Terraform apply (deploy)
+        if: github.event.inputs.action == 'deploy' && github.event.inputs.terraform_action == 'apply'
+        working-directory: infra/terraform
+        env:
+          TF_VAR_region: ${{ env.AWS_REGION }}
+          TF_VAR_frontend_image_tag: ${{ env.IMAGE_TAG }}
+          TF_VAR_backend_image_tag: ${{ env.IMAGE_TAG }}
+        run: terraform apply -input=false -auto-approve tfplan
+
+      - name: Terraform plan destroy
+        if: github.event.inputs.action == 'destroy'
+        working-directory: infra/terraform
+        env:
+          TF_VAR_region: ${{ env.AWS_REGION }}
+          TF_VAR_frontend_image_tag: latest
+          TF_VAR_backend_image_tag: latest
+        run: terraform plan -destroy -input=false -out=tfdestroy.tfplan
+
+      - name: Terraform destroy
+        if: github.event.inputs.action == 'destroy'
+        working-directory: infra/terraform
+        env:
+          TF_VAR_region: ${{ env.AWS_REGION }}
+          TF_VAR_frontend_image_tag: latest
+          TF_VAR_backend_image_tag: latest
+        run: terraform apply -input=false -auto-approve tfdestroy.tfplan

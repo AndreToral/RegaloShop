@@ -1,0 +1,80 @@
+name: ECR Build & Push (Ansible)
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Environment de GitHub (inyecta secrets/vars AWS)
+        required: true
+        default: prod
+      region:
+        description: Región AWS (fallback a vars.AWS_REGION)
+        required: false
+      project_name:
+        description: Prefijo de repos e imagen
+        required: true
+        default: tienda
+      frontend_api_url:
+        description: VITE_API_URL para el build del frontend
+        required: true
+        default: /api
+      update_ecs:
+        description: "si/no: forzar despliegue en ECS desde Ansible"
+        required: true
+        default: "no"
+      ecs_cluster_name:
+        description: Nombre del cluster ECS (si update_ecs=si)
+        required: false
+        default: ""
+      ecs_service_frontend:
+        description: Servicio ECS frontend (si update_ecs=si)
+        required: false
+        default: ""
+      ecs_service_backend:
+        description: Servicio ECS backend (si update_ecs=si)
+        required: false
+        default: ""
+
+env:
+  AWS_REGION: ${{ github.event.inputs.region || vars.AWS_REGION || 'us-east-1' }}
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: ecr-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  ecr_ansible:
+    name: Build/Push imágenes ECR (Ansible)
+    runs-on: ubuntu-latest
+    environment: ${{ github.event.inputs.environment }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Install Ansible
+        run: |
+          python -m pip install --upgrade pip
+          pip install ansible-core
+
+      - name: Ejecutar playbook ecr.yml
+        env:
+          AWS_REGION: ${{ env.AWS_REGION }}
+        run: |
+          ansible-playbook infra/ansible/ecr.yml --extra-vars "\
+          region=${AWS_REGION} \
+          project_name=${{ github.event.inputs.project_name }} \
+          frontend_api_url=${{ github.event.inputs.frontend_api_url }} \
+          update_ecs=${{ github.event.inputs.update_ecs }} \
+          ecs_cluster_name=${{ github.event.inputs.ecs_cluster_name }} \
+          ecs_service_frontend=${{ github.event.inputs.ecs_service_frontend }} \
+          ecs_service_backend=${{ github.event.inputs.ecs_service_backend }}" 
