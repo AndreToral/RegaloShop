@@ -5,7 +5,7 @@ data "aws_iam_policy" "ecs_task_execution" {
 
 // Rol de ejecución de tareas ECS
 resource "aws_iam_role" "ecs_task_execution" {
-  name               = "${local.name_prefix}-ecsTaskExecutionRole"
+  name = "${local.name_prefix}-ecsTaskExecutionRole"
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
     Statement = [{
@@ -20,4 +20,21 @@ resource "aws_iam_role" "ecs_task_execution" {
 resource "aws_iam_role_policy_attachment" "ecs_task_exec_attach" {
   role       = aws_iam_role.ecs_task_execution.name
   policy_arn = data.aws_iam_policy.ecs_task_execution.arn
+}
+
+// Permiso puntual para leer secretos de DB
+resource "aws_iam_role_policy" "ecs_task_read_db_secret" {
+  name = "${local.name_prefix}-ecs-db-secret"
+  role = aws_iam_role.ecs_task_execution.id
+  policy = jsonencode({
+    Version = "2012-10-17",
+    Statement = [{
+      Effect = "Allow",
+      Action = ["secretsmanager:GetSecretValue"],
+      Resource = [
+        aws_secretsmanager_secret.db_url.arn,
+        aws_secretsmanager_secret.db_credentials.arn
+      ]
+    }]
+  })
 }
