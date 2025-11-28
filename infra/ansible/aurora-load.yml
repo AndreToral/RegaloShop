@@ -1,0 +1,270 @@
+---
+- name: Cargar base en Aurora (dump + migrations + seed)
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars:
+    repo_root: "{{ playbook_dir }}/../.."
+    aws_region: "{{ lookup('env', 'AWS_REGION') | default('us-east-1', true) }}"
+    project_name: "{{ lookup('env', 'PROJECT_NAME') | default('tienda', true) }}"
+    db_sg_name: "{{ project_name }}-db-sg"
+    utility_instance_id: "{{ lookup('env', 'UTILITY_INSTANCE_ID') | default('', true) }}"
+
+    aurora_host: "{{ lookup('env', 'AURORA_HOST') | default('', true) }}"
+    aurora_port: "{{ lookup('env', 'AURORA_PORT') | default('5432', true) }}"
+    aurora_db: "{{ lookup('env', 'AURORA_DB') | default('', true) }}"
+    aurora_user: "{{ lookup('env', 'AURORA_USER') | default('', true) }}"
+    aurora_password: "{{ lookup('env', 'AURORA_PASSWORD') | default('', true) }}"
+    sql_dump_path: "{{ lookup('env', 'SQL_DUMP') | default('', true) }}"
+    seed_with_orders: "{{ lookup('env', 'SEED_WITH_ORDERS') | default('false', true) }}"
+    seed_truncate: "{{ lookup('env', 'SEED_TRUNCATE') | default('false', true) }}"
+    temp_ingress_enabled: "{{ (lookup('env', 'AURORA_TEMP_INGRESS') | default('true', true)) | lower in ['true', '1', 'yes', 'si', 'sí'] }}"
+    temp_ingress_cidr: "{{ lookup('env', 'TEMP_INGRESS_CIDR') | default('', true) }}"
+    docker_psql_image: "postgres:16"
+
+  tasks:
+    - name: Instalar boto3/botocore en el controlador (modo usuario)
+      ansible.builtin.command: >
+        python3 -m pip install --user --break-system-packages boto3 botocore
+      delegate_to: localhost
+      run_once: true
+      register: boto_install
+      changed_when: "'Successfully installed' in boto_install.stdout or 'Successfully installed' in boto_install.stderr"
+      failed_when: boto_install.rc != 0 and ('already satisfied' not in boto_install.stdout) and ('already satisfied' not in boto_install.stderr)
+
+    - name: Resolver datos de Aurora desde AWS si no se pasaron por entorno
+      when: aurora_host | length == 0 or aurora_user | length == 0 or aurora_password | length == 0 or aurora_db | length == 0
+      block:
+        - name: Obtener info del cluster Aurora
+          ansible.builtin.command: >
+            aws rds describe-db-clusters
+            --region {{ aws_region }}
+            --filters Name=db-cluster-id,Values={{ project_name }}-aurora
+          register: aurora_desc
+          changed_when: false
+
+        - name: Definir host, puerto y nombre de DB desde el cluster
+          ansible.builtin.set_fact:
+            aurora_host: "{{ (aurora_desc.stdout | from_json).DBClusters[0].Endpoint }}"
+            aurora_port: "{{ (aurora_desc.stdout | from_json).DBClusters[0].Port | default(5432) }}"
+            aurora_db: "{{ (aurora_desc.stdout | from_json).DBClusters[0].DatabaseName }}"
+
+        - name: Obtener secret de credenciales de Aurora
+          ansible.builtin.command: >
+            aws secretsmanager get-secret-value
+            --region {{ aws_region }}
+            --secret-id {{ project_name }}-aurora-credentials
+          register: aurora_secret
+          changed_when: false
+
+        - name: Definir usuario y password desde el secret
+          ansible.builtin.set_fact:
+            aurora_user: "{{ (aurora_secret.stdout | from_json).SecretString | from_json | json_query('username') }}"
+            aurora_password: "{{ (aurora_secret.stdout | from_json).SecretString | from_json | json_query('password') }}"
+
+    - name: Validar variables requeridas para Aurora
+      ansible.builtin.assert:
+        that:
+          - aurora_host | length > 0
+          - aurora_password | length > 0
+        fail_msg: "No se pudo resolver AURORA_HOST/AURORA_PASSWORD. Pásalas por entorno o verifica el cluster/secret."
+
+    - name: Validar que AWS CLI esté disponible
+      ansible.builtin.command: aws --version
+      register: aws_cli_check
+      changed_when: false
+
+    - name: Verificar session-manager-plugin para SSM
+      ansible.builtin.command: which session-manager-plugin
+      register: ssm_plugin_check
+      failed_when: false
+      changed_when: false
+
+    - name: Instalar session-manager-plugin (Ubuntu/Debian) si falta
+      when: ssm_plugin_check.rc != 0
+      block:
+        - name: Descargar paquete session-manager-plugin
+          ansible.builtin.get_url:
+            url: https://s3.amazonaws.com/session-manager-downloads/plugin/latest/ubuntu_64bit/session-manager-plugin.deb
+            dest: /tmp/session-manager-plugin.deb
+            mode: "0644"
+
+        - name: Instalar session-manager-plugin
+          ansible.builtin.command: dpkg -i /tmp/session-manager-plugin.deb
+          register: ssm_install
+          become: true
+          changed_when: "'installed' in ssm_install.stdout or ssm_install.rc == 0"
+
+        - name: Validar session-manager-plugin instalado
+          ansible.builtin.command: session-manager-plugin -version
+          changed_when: false
+
+    - name: Resolver instancia utility por tag si no se definió UTILITY_INSTANCE_ID
+      when: utility_instance_id | length == 0
+      ansible.builtin.command: >
+        aws ec2 describe-instances
+        --region {{ aws_region }}
+        --filters
+          Name=tag:Name,Values={{ project_name }}-utility
+          Name=instance-state-name,Values=running,stopped
+      register: utility_desc
+      changed_when: false
+
+    - name: Guardar instancia utility si existe
+      when: utility_instance_id | length == 0
+      ansible.builtin.set_fact:
+        utility_instance_id: "{{ (utility_desc.stdout | from_json).Reservations | map(attribute='Instances') | sum(start=[]) | map(attribute='InstanceId') | list | first | default('') }}"
+
+    - name: Registrar host utility vía SSM (si se define UTILITY_INSTANCE_ID)
+      when: utility_instance_id | length > 0
+      ansible.builtin.add_host:
+        name: utility
+        ansible_host: "{{ utility_instance_id }}"
+        ansible_connection: aws_ssm
+        ansible_aws_ssm_region: "{{ aws_region }}"
+        ansible_user: ec2-user
+
+    - name: Definir destino para tareas (local o utility)
+      ansible.builtin.set_fact:
+        delegate_target: "{{ (utility_instance_id | length > 0) | ternary('utility', 'localhost') }}"
+
+    - name: Validar que Docker esté disponible
+      ansible.builtin.command: docker --version
+      register: docker_check
+      changed_when: false
+      delegate_to: "{{ delegate_target }}"
+
+    - name: Obtener imagen de psql en Docker
+      ansible.builtin.command: docker pull {{ docker_psql_image }}
+      register: docker_pull
+      changed_when: "'Downloaded newer image' in docker_pull.stdout"
+      delegate_to: "{{ delegate_target }}"
+
+    - name: Resolver SG de DB
+      ansible.builtin.command: >
+        aws ec2 describe-security-groups
+        --region {{ aws_region }}
+        --filters Name=group-name,Values={{ db_sg_name }}
+      register: db_sg_raw
+
+    - name: Guardar SG de DB
+      ansible.builtin.set_fact:
+        db_sg_id: "{{ (db_sg_raw.stdout | from_json).SecurityGroups[0].GroupId | default('') }}"
+
+    - name: Validar SG de DB
+      ansible.builtin.assert:
+        that: db_sg_id | length > 0
+        fail_msg: "No se encontró el SG {{ db_sg_name }}. Asegúrate de haber aplicado Terraform."
+
+    - name: Obtener IP pública actual
+      when: temp_ingress_enabled and (temp_ingress_cidr | length == 0)
+      ansible.builtin.command: curl -s https://checkip.amazonaws.com
+      register: my_public_ip
+      changed_when: false
+
+    - name: Definir CIDR para ingreso temporal
+      when: temp_ingress_enabled
+      ansible.builtin.set_fact:
+        ingress_cidr: >-
+          {{ (temp_ingress_cidr | length > 0) | ternary(temp_ingress_cidr, (my_public_ip.stdout | trim) + '/32') }}
+
+    - name: Abrir ingreso temporal a Aurora para esta IP
+      when: temp_ingress_enabled
+      ansible.builtin.command: >
+        aws ec2 authorize-security-group-ingress
+        --region {{ aws_region }}
+        --group-id {{ db_sg_id }}
+        --protocol tcp --port {{ aurora_port }}
+        --cidr {{ ingress_cidr }}
+      register: sg_ingress
+      failed_when: sg_ingress.rc != 0 and 'InvalidPermission.Duplicate' not in sg_ingress.stderr
+      changed_when: "'InvalidPermission.Duplicate' not in sg_ingress.stderr"
+
+    - name: Construir DATABASE_URL
+      ansible.builtin.set_fact:
+        database_url: "postgres://{{ aurora_user | urlencode }}:{{ aurora_password | urlencode }}@{{ aurora_host }}:{{ aurora_port }}/{{ aurora_db }}"
+
+    - name: Esperar a que Aurora responda en el puerto {{ aurora_port }}
+      ansible.builtin.wait_for:
+        host: "{{ aurora_host }}"
+        port: "{{ aurora_port | int }}"
+        delay: 2
+        timeout: 120
+      delegate_to: "{{ delegate_target }}"
+
+    - name: Validar existencia del dump (si se indicó)
+      when: sql_dump_path | length > 0
+      ansible.builtin.stat:
+        path: "{{ sql_dump_path }}"
+      register: dump_stat
+      delegate_to: "{{ delegate_target }}"
+
+    - name: Fallar si el dump no existe
+      when:
+        - sql_dump_path | length > 0
+        - not dump_stat.stat.exists
+      ansible.builtin.fail:
+        msg: "El dump indicado en SQL_DUMP no existe: {{ sql_dump_path }} (usa ruta absoluta)."
+
+    - name: Importar dump a Aurora con psql en Docker
+      when: sql_dump_path | length > 0
+      ansible.builtin.command: >-
+        docker run --rm
+        -e PGPASSWORD={{ aurora_password }}
+        -v {{ sql_dump_path }}:/dump.sql:ro
+        {{ docker_psql_image }}
+        psql
+        -h {{ aurora_host }}
+        -p {{ aurora_port }}
+        -U {{ aurora_user }}
+        -d {{ aurora_db }}
+        -f /dump.sql
+      environment:
+        PGPASSWORD: "{{ aurora_password }}"
+      register: import_dump
+      changed_when: import_dump.rc == 0
+      delegate_to: "{{ delegate_target }}"
+
+    - name: Ejecutar migraciones SQL del backend
+      ansible.builtin.command: node backend/scripts/runMigrations.js
+      args:
+        chdir: "{{ repo_root }}"
+      environment:
+        DATABASE_URL: "{{ database_url }}"
+      register: migrations_out
+      changed_when: true
+      delegate_to: "{{ delegate_target }}"
+
+    - name: Ejecutar seed del backend
+      ansible.builtin.command: >-
+        node backend/scripts/seedDatabase.js
+        {{ '--truncate' if (seed_truncate | lower) in ['true', '1', 'yes', 'si', 'sí'] else '' }}
+        {{ '--with-orders' if (seed_with_orders | lower) in ['true', '1', 'yes', 'si', 'sí'] else '' }}
+      args:
+        chdir: "{{ repo_root }}"
+      environment:
+        DATABASE_URL: "{{ database_url }}"
+      register: seed_out
+      changed_when: true
+      delegate_to: "{{ delegate_target }}"
+
+    - name: Revocar ingreso temporal
+      when: temp_ingress_enabled
+      ansible.builtin.command: >
+        aws ec2 revoke-security-group-ingress
+        --region {{ aws_region }}
+        --group-id {{ db_sg_id }}
+        --protocol tcp --port {{ aurora_port }}
+        --cidr {{ ingress_cidr }}
+      register: sg_revoke
+      failed_when: sg_revoke.rc != 0 and 'InvalidPermission.NotFound' not in sg_revoke.stderr
+      changed_when: "'InvalidPermission.NotFound' not in sg_revoke.stderr"
+
+    - name: Mostrar salida de migraciones y seed
+      ansible.builtin.debug:
+        msg:
+          - "Migraciones:"
+          - "{{ migrations_out.stdout_lines }}"
+          - "Seed:"
+          - "{{ seed_out.stdout_lines }}"
