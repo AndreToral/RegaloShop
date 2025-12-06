@@ -9,7 +9,9 @@
     "dev": "nodemon src/server.js",
     "db:seed": "node scripts/seedDatabase.js",
     "db:migrate": "node scripts/runMigrations.js",
-    "db:reseed": "node scripts/seedDatabase.js --truncate --with-orders"
+    "db:reseed": "node scripts/seedDatabase.js --truncate --with-orders",
+    "test": "jest --coverage",
+    "test:watch": "jest --watch"
   },
   "keywords": [
     "ecommerce",
@@ -26,6 +28,7 @@
     "uuid": "^9.0.1"
   },
   "devDependencies": {
+    "jest": "^29.7.0",
     "nodemon": "^3.1.0"
   }
 }
