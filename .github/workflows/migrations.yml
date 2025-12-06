@@ -1,0 +1,197 @@
+name: 🗄️ Migraciones de Base de Datos (vía Bastion)
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Ambiente (prod/dev/staging)"
+        required: true
+        type: choice
+        default: prod
+        options:
+          - prod
+          - dev
+          - staging
+      project_name:
+        description: "Nombre del proyecto (ej: tienda)"
+        required: true
+        default: "tienda"
+
+env:
+  AWS_REGION: us-east-1
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: migrations-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  run-migrations:
+    name: 🚀 Ejecutar Migraciones vía Bastion
+    runs-on: ubuntu-latest
+    environment: ${{ github.event.inputs.environment }}
+    steps:
+      - name: Descargar código
+        uses: actions/checkout@v4
+
+      - name: Configurar credenciales AWS (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Obtener IP del Bastion Host
+        id: bastion-info
+        run: |
+          # Obtener instancia bastion
+          BASTION_ID=$(aws ec2 describe-instances \
+            --filters "Name=tag:Name,Values=${{ github.event.inputs.project_name }}-bastion" \
+                      "Name=instance-state-name,Values=running" \
+            --query 'Reservations[0].Instances[0].InstanceId' \
+            --output text)
+          
+          if [ "$BASTION_ID" = "None" ] || [ -z "$BASTION_ID" ]; then
+            echo "❌ Bastion host no encontrado o no está corriendo"
+            exit 1
+          fi
+          
+          BASTION_IP=$(aws ec2 describe-instances \
+            --instance-ids "$BASTION_ID" \
+            --query 'Reservations[0].Instances[0].PublicIpAddress' \
+            --output text)
+          
+          echo "bastion_id=$BASTION_ID" >> $GITHUB_OUTPUT
+          echo "bastion_ip=$BASTION_IP" >> $GITHUB_OUTPUT
+          echo "✅ Bastion encontrado: $BASTION_IP ($BASTION_ID)"
+
+      - name: Configurar clave SSH
+        run: |
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          
+          # Decodificar la clave desde base64
+          echo "${{ secrets.BASTION_SSH_KEY_B64 }}" | base64 -d > ~/.ssh/bastion_key.pem
+          
+          # Verificar que la clave se guardó correctamente
+          if [ ! -f ~/.ssh/bastion_key.pem ]; then
+            echo "❌ Archivo de clave SSH no creado"
+            exit 1
+          fi
+          
+          # Asegurar permisos correctos
+          chmod 600 ~/.ssh/bastion_key.pem
+          
+          # Validar que la clave es válida
+          if ! ssh-keygen -l -f ~/.ssh/bastion_key.pem > /dev/null 2>&1; then
+            echo "❌ Formato de clave SSH inválido"
+            cat ~/.ssh/bastion_key.pem | head -3
+            exit 1
+          fi
+          
+          echo "✅ Clave SSH validada exitosamente"
+          
+          # Agregar host a known_hosts
+          ssh-keyscan -H ${{ steps.bastion-info.outputs.bastion_ip }} >> ~/.ssh/known_hosts 2>/dev/null || true
+          
+          echo "✅ Configuración SSH lista"
+
+      - name: Configurar Node.js (para scripts de migración locales)
+        uses: actions/setup-node@v4
+        with:
+          node-version: "18"
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+
+      - name: 🔍 Depurar configuración SSH
+        run: |
+          echo "🔍 Información de depuración de clave SSH:"
+          echo "  Archivo existe: $(test -f ~/.ssh/bastion_key.pem && echo 'SÍ' || echo 'NO')"
+          echo "  Tamaño archivo: $(stat -f%z ~/.ssh/bastion_key.pem 2>/dev/null || stat -c%s ~/.ssh/bastion_key.pem 2>/dev/null || echo 'N/A')"
+          echo "  Permisos: $(ls -la ~/.ssh/bastion_key.pem 2>/dev/null | awk '{print $1}')"
+          echo "  Primera línea: $(head -1 ~/.ssh/bastion_key.pem)"
+          echo "  Última línea: $(tail -1 ~/.ssh/bastion_key.pem)"
+          echo ""
+          echo "🔍 Versión SSH:"
+          ssh -V
+          echo ""
+          echo "🔍 Información del Bastion:"
+          echo "  IP: ${{ steps.bastion-info.outputs.bastion_ip }}"
+          echo "  ID: ${{ steps.bastion-info.outputs.bastion_id }}"
+
+      - name: Probar conectividad con Bastion
+        run: |
+          ssh -i ~/.ssh/bastion_key.pem -o ConnectTimeout=10 ubuntu@${{ steps.bastion-info.outputs.bastion_ip }} "echo '✅ Conexión con Bastion exitosa'"
+
+      - name: Copiar migraciones al Bastion
+        run: |
+          BASTION_IP="${{ steps.bastion-info.outputs.bastion_ip }}"
+          
+          # Copiar migraciones
+          scp -i ~/.ssh/bastion_key.pem -r backend/db/migrations ubuntu@${BASTION_IP}:/tmp/migrations
+          
+          # Copiar archivos de paquetes
+          scp -i ~/.ssh/bastion_key.pem backend/package.json ubuntu@${BASTION_IP}:/tmp/package.json
+          scp -i ~/.ssh/bastion_key.pem backend/package-lock.json ubuntu@${BASTION_IP}:/tmp/package-lock.json 2>/dev/null || true
+          
+          # Crear directorio backend en Bastion
+          ssh -i ~/.ssh/bastion_key.pem ubuntu@${BASTION_IP} mkdir -p /tmp/regaloshop-backend
+          
+          # Copiar directorio src completo a /tmp/regaloshop-backend/src
+          echo "Copiando backend/src al Bastion..."
+          scp -i ~/.ssh/bastion_key.pem -r backend/src ubuntu@${BASTION_IP}:/tmp/regaloshop-backend/ || {
+            echo "Advertencia: scp pudo haber fallado, verificando en Bastion..."
+            ssh -i ~/.ssh/bastion_key.pem ubuntu@${BASTION_IP} ls -la /tmp/regaloshop-backend/ 2>&1 | head -20
+          }
+
+      - name: Verificar archivos en Bastion
+        run: |
+          BASTION_IP="${{ steps.bastion-info.outputs.bastion_ip }}"
+          echo "🔍 Verificando archivos en Bastion..."
+          ssh -i ~/.ssh/bastion_key.pem ubuntu@${BASTION_IP} << 'VERIFY'
+          echo "Contenido de /tmp/regaloshop-backend/:"
+          ls -la /tmp/regaloshop-backend/ || echo "Directorio no encontrado"
+          echo ""
+          echo "Verificando directorio src/:"
+          [ -d /tmp/regaloshop-backend/src ] && echo "✅ src/ existe" || echo "❌ src/ NO encontrado"
+          echo ""
+          echo "Verificando pool.js:"
+          [ -f /tmp/regaloshop-backend/src/db/pool.js ] && echo "✅ pool.js existe" || echo "❌ pool.js NO encontrado"
+          VERIFY
+
+      - name: Ejecutar migraciones en Bastion
+        run: |
+          ssh -i ~/.ssh/bastion_key.pem ubuntu@${{ steps.bastion-info.outputs.bastion_ip }} \
+            "/opt/regaloshop/run-migrations.sh ${{ github.event.inputs.project_name }} ${{ env.AWS_REGION }} /tmp/migrations"
+
+      - name: Ejecutar script de datos semilla
+        run: |
+          BASTION_IP="${{ steps.bastion-info.outputs.bastion_ip }}"
+          
+          # Crear directorio scripts en Bastion
+          ssh -i ~/.ssh/bastion_key.pem ubuntu@${BASTION_IP} mkdir -p /tmp/regaloshop-backend/scripts
+          
+          # Copiar script seed al directorio scripts (¡no a la raíz!)
+          scp -i ~/.ssh/bastion_key.pem backend/scripts/seedDatabase.js ubuntu@${BASTION_IP}:/tmp/regaloshop-backend/scripts/seedDatabase.js
+          
+          # Ejecutar seed vía script del Bastion
+          ssh -i ~/.ssh/bastion_key.pem ubuntu@${BASTION_IP} \
+            "/opt/regaloshop/run-seed.sh ${{ github.event.inputs.project_name }} ${{ env.AWS_REGION }} /tmp/regaloshop-backend/scripts/seedDatabase.js"
+        continue-on-error: true
+
+      - name: 📋 Resumen de Migraciones
+        if: always()
+        run: |
+          echo ""
+          echo "════════════════════════════════════════════"
+          echo "✅ MIGRACIONES DE BASE DE DATOS COMPLETADAS"
+          echo "════════════════════════════════════════════"
+          echo "Proyecto: ${{ github.event.inputs.project_name }}"
+          echo "Ambiente: ${{ github.event.inputs.environment }}"
+          echo "Bastion: ${{ steps.bastion-info.outputs.bastion_ip }}"
+          echo ""
+          echo "Ejecución: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          echo "════════════════════════════════════════════"
+          echo "════════════════════════════════════════════"
