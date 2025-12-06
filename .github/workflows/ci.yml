@@ -1,4 +1,4 @@
-name: CI
+name: Integración Continua
 
 on:
   push:
@@ -11,20 +11,20 @@ permissions:
 
 jobs:
   backend:
-    name: Backend – smoke
+    name: Backend – Prueba de carga
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
+      - name: Descargar código
         uses: actions/checkout@v4
 
-      - name: Setup Node.js
+      - name: Configurar Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 18
           cache: npm
           cache-dependency-path: backend/package-lock.json
 
-      - name: Install dependencies
+      - name: Instalar dependencias
         working-directory: backend
         run: npm ci
 
@@ -33,51 +33,51 @@ jobs:
         run: node -e "require('./src/app'); console.log('Backend carga sin errores de sintaxis')"
 
   frontend:
-    name: Frontend – build
+    name: Frontend – Construcción
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
+      - name: Descargar código
         uses: actions/checkout@v4
 
-      - name: Setup Node.js
+      - name: Configurar Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 18
           cache: npm
           cache-dependency-path: frontend/package-lock.json
 
-      - name: Install dependencies
+      - name: Instalar dependencias
         working-directory: frontend
         run: npm ci
 
-      - name: Build
+      - name: Construir
         working-directory: frontend
         env:
           VITE_API_URL: /api
         run: npm run build
 
   dockerfiles:
-    name: Dockerfiles – build only
+    name: Dockerfiles – Solo construcción
     runs-on: ubuntu-latest
     needs:
       - backend
       - frontend
     # Separa el trabajo con Docker para correr en un agente limpio con privilegios de build.
     steps:
-      - name: Checkout
+      - name: Descargar código
         uses: actions/checkout@v4
 
-      - name: Setup Docker Buildx
+      - name: Configurar Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Build backend image (sin push)
+      - name: Construir imagen backend (sin push)
         uses: docker/build-push-action@v5
         with:
           context: ./backend
           push: false
           tags: regaloshop/backend:ci-${{ github.sha }}
 
-      - name: Build frontend image (sin push)
+      - name: Construir imagen frontend (sin push)
         uses: docker/build-push-action@v5
         with:
           context: ./frontend
