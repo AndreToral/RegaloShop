@@ -90,13 +90,13 @@ jobs:
           role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: 🧹 Limpieza forzada de Secrets Aurora (opcional)
+      - name: Limpieza forzada de Secrets Aurora (opcional)
         if: github.event.inputs.force_clean_secrets == 'true'
         run: |
           chmod +x infra/scripts/cleanup-secrets.sh
           ./infra/scripts/cleanup-secrets.sh tienda ${{ env.AWS_REGION }}
 
-      - name: 🔓 Limpieza forzada de Lock DynamoDB Terraform (opcional)
+      - name:  Limpieza forzada de Lock DynamoDB Terraform (opcional)
         if: github.event.inputs.force_cleanup_tflock == 'true'
         run: |
           chmod +x infra/scripts/cleanup-tflock.sh
