@@ -2,7 +2,7 @@
 resource "aws_wafv2_web_acl" "main" {
   count       = var.enable_edge ? 1 : 0
   name        = "${local.name_prefix}-waf"
-  description = "Protección básica para CloudFront"
+  description = "Basic protection for CloudFront - monitoring mode"
   scope       = "CLOUDFRONT"
 
   default_action {
@@ -51,5 +51,26 @@ resource "aws_wafv2_web_acl" "main" {
     cloudwatch_metrics_enabled = true
     metric_name                = "${local.name_prefix}-waf"
     sampled_requests_enabled   = true
+  }
+}
+
+// WAF Logging (CKV2_AWS_31)
+resource "aws_cloudwatch_log_group" "waf" {
+  count             = var.enable_edge ? 1 : 0
+  name              = "aws-waf-logs-${local.name_prefix}"
+  retention_in_days = 365
+  kms_key_id        = aws_kms_key.logs.arn
+  tags              = { Name = "${local.name_prefix}-waf-logs" }
+}
+
+resource "aws_wafv2_web_acl_logging_configuration" "main" {
+  count                   = var.enable_edge ? 1 : 0
+  log_destination_configs = [aws_cloudwatch_log_group.waf[0].arn]
+  resource_arn            = aws_wafv2_web_acl.main[0].arn
+
+  redacted_fields {
+    single_header {
+      name = "authorization"
+    }
   }
 }
