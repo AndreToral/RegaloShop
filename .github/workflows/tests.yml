@@ -1,0 +1,224 @@
+# =============================================================================
+# WORKFLOW: Pruebas Unitarias con Jest y Análisis SonarQube
+# Ejecuta los tests y analiza Backend y Frontend por separado
+# =============================================================================
+
+name: 🧪 Pruebas Unitarias y SonarQube
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+
+jobs:
+  tests:
+    name: Ejecutar Tests y Análisis
+    runs-on: ubuntu-latest
+
+    steps:
+      # -----------------------------------------------------------------------
+      # Paso 1: Descargar el codigo del repositorio
+      # -----------------------------------------------------------------------
+      - name: 📥 Descargar codigo
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # -----------------------------------------------------------------------
+      # Paso 2: Configurar Node.js
+      # -----------------------------------------------------------------------
+      - name: 🟢 Configurar Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: backend/package-lock.json
+
+      # -----------------------------------------------------------------------
+      # Paso 3: Instalar dependencias
+      # -----------------------------------------------------------------------
+      - name: 📦 Instalar dependencias
+        working-directory: backend
+        run: npm ci
+
+      # -----------------------------------------------------------------------
+      # Paso 4: Ejecutar tests con cobertura
+      # -----------------------------------------------------------------------
+      - name: 🧪 Ejecutar pruebas unitarias
+        working-directory: backend
+        run: npm test -- --verbose --coverage --coverageReporters=lcov --coverageReporters=text 2>&1 | tee test-output.txt
+
+      # -----------------------------------------------------------------------
+      # Paso 5: Publicar resultado en GitHub Summary
+      # -----------------------------------------------------------------------
+      - name: 📊 Publicar resumen de tests
+        working-directory: backend
+        if: always()
+        run: |
+          echo "## 🧪 Resultado de Pruebas Unitarias" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          cat test-output.txt >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+
+      # -----------------------------------------------------------------------
+      # Paso 6: Iniciar SonarQube en Docker
+      # -----------------------------------------------------------------------
+      - name: 🐳 Iniciar SonarQube
+        run: |
+          docker run -d --name sonarqube -p 9000:9000 \
+            -e SONAR_ES_BOOTSTRAP_CHECKS_DISABLE=true \
+            sonarqube:lts-community
+          
+          echo "Esperando que SonarQube inicie (~2 minutos)..."
+          for i in $(seq 1 60); do
+            STATUS=$(curl -s http://localhost:9000/api/system/status 2>/dev/null | jq -r '.status' 2>/dev/null || echo "")
+            if [ "$STATUS" = "UP" ]; then
+              echo "✅ SonarQube esta listo!"
+              exit 0
+            fi
+            echo "Intento $i/60 - Estado: $STATUS"
+            sleep 5
+          done
+          echo "❌ SonarQube no inicio a tiempo"
+          docker logs sonarqube
+          exit 1
+
+      # -----------------------------------------------------------------------
+      # Paso 7: Configurar proyectos en SonarQube (Backend y Frontend)
+      # -----------------------------------------------------------------------
+      - name: 🔧 Configurar proyectos en SonarQube
+        run: |
+          curl -s -u admin:admin -X POST "http://localhost:9000/api/users/change_password?login=admin&previousPassword=admin&password=admin123" || true
+          
+          # Crear proyecto Backend
+          curl -s -u admin:admin123 -X POST "http://localhost:9000/api/projects/create?name=Regaloshop-Backend&project=regaloshop-backend"
+          
+          # Crear proyecto Frontend
+          curl -s -u admin:admin123 -X POST "http://localhost:9000/api/projects/create?name=Regaloshop-Frontend&project=regaloshop-frontend"
+          
+          # Generar token
+          TOKEN=$(curl -s -u admin:admin123 -X POST "http://localhost:9000/api/user_tokens/generate?name=github-action" | jq -r '.token')
+          echo "SONAR_TOKEN=$TOKEN" >> $GITHUB_ENV
+          echo "✅ Proyectos configurados (Backend y Frontend)"
+
+      # -----------------------------------------------------------------------
+      # Paso 8: Descargar SonarScanner
+      # -----------------------------------------------------------------------
+      - name: � Descargar SonarScanner
+        run: |
+          wget -q https://binaries.sonarsource.com/Distribution/sonar-scanner-cli/sonar-scanner-cli-5.0.1.3006-linux.zip
+          unzip -q sonar-scanner-cli-5.0.1.3006-linux.zip
+
+      # -----------------------------------------------------------------------
+      # Paso 9: Análisis SonarQube - BACKEND
+      # -----------------------------------------------------------------------
+      - name: 🔍 Análisis SonarQube - Backend
+        run: |
+          ./sonar-scanner-5.0.1.3006-linux/bin/sonar-scanner \
+            -Dsonar.projectKey=regaloshop-backend \
+            -Dsonar.projectName="Regaloshop Backend" \
+            -Dsonar.sources=backend/src \
+            -Dsonar.tests=backend/tests \
+            -Dsonar.javascript.lcov.reportPaths=backend/coverage/lcov.info \
+            -Dsonar.host.url=http://localhost:9000 \
+            -Dsonar.token=$SONAR_TOKEN
+
+      # -----------------------------------------------------------------------
+      # Paso 10: Análisis SonarQube - FRONTEND
+      # -----------------------------------------------------------------------
+      - name: 🔍 Análisis SonarQube - Frontend
+        run: |
+          ./sonar-scanner-5.0.1.3006-linux/bin/sonar-scanner \
+            -Dsonar.projectKey=regaloshop-frontend \
+            -Dsonar.projectName="Regaloshop Frontend" \
+            -Dsonar.sources=frontend/src \
+            -Dsonar.host.url=http://localhost:9000 \
+            -Dsonar.token=$SONAR_TOKEN
+
+      # -----------------------------------------------------------------------
+      # Paso 11: Publicar resultados SonarQube separados
+      # -----------------------------------------------------------------------
+      - name: 📊 Publicar resultados SonarQube
+        if: always()
+        run: |
+          sleep 15
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "## 🔍 Análisis de Calidad - SonarQube" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          # =============================================
+          # BACKEND
+          # =============================================
+          echo "### 🖥️ Backend (Node.js/Express)" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          BACKEND=$(curl -s -u admin:admin123 "http://localhost:9000/api/measures/component?component=regaloshop-backend&metricKeys=ncloc,bugs,vulnerabilities,code_smells,coverage,duplicated_lines_density,security_hotspots" 2>/dev/null || echo '{}')
+          
+          B_LINES=$(echo $BACKEND | jq -r '.component.measures[]? | select(.metric=="ncloc") | .value // "0"' 2>/dev/null || echo "0")
+          B_BUGS=$(echo $BACKEND | jq -r '.component.measures[]? | select(.metric=="bugs") | .value // "0"' 2>/dev/null || echo "0")
+          B_VULNS=$(echo $BACKEND | jq -r '.component.measures[]? | select(.metric=="vulnerabilities") | .value // "0"' 2>/dev/null || echo "0")
+          B_HOTSPOTS=$(echo $BACKEND | jq -r '.component.measures[]? | select(.metric=="security_hotspots") | .value // "0"' 2>/dev/null || echo "0")
+          B_SMELLS=$(echo $BACKEND | jq -r '.component.measures[]? | select(.metric=="code_smells") | .value // "0"' 2>/dev/null || echo "0")
+          B_COV=$(echo $BACKEND | jq -r '.component.measures[]? | select(.metric=="coverage") | .value // "0"' 2>/dev/null || echo "0")
+          B_DUP=$(echo $BACKEND | jq -r '.component.measures[]? | select(.metric=="duplicated_lines_density") | .value // "0"' 2>/dev/null || echo "0")
+          
+          echo "| Métrica | Valor |" >> $GITHUB_STEP_SUMMARY
+          echo "|---------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| 📏 Líneas de Código | $B_LINES |" >> $GITHUB_STEP_SUMMARY
+          echo "| 🐛 Bugs | $B_BUGS |" >> $GITHUB_STEP_SUMMARY
+          echo "| 🔓 Vulnerabilidades | $B_VULNS |" >> $GITHUB_STEP_SUMMARY
+          echo "| 🔥 Security Hotspots | $B_HOTSPOTS |" >> $GITHUB_STEP_SUMMARY
+          echo "| 🔧 Code Smells | $B_SMELLS |" >> $GITHUB_STEP_SUMMARY
+          echo "| ✅ Cobertura | ${B_COV}% |" >> $GITHUB_STEP_SUMMARY
+          echo "| 📋 Código Duplicado | ${B_DUP}% |" >> $GITHUB_STEP_SUMMARY
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          # =============================================
+          # FRONTEND
+          # =============================================
+          echo "### 🎨 Frontend (React/Vite)" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          FRONTEND=$(curl -s -u admin:admin123 "http://localhost:9000/api/measures/component?component=regaloshop-frontend&metricKeys=ncloc,bugs,vulnerabilities,code_smells,coverage,duplicated_lines_density,security_hotspots" 2>/dev/null || echo '{}')
+          
+          F_LINES=$(echo $FRONTEND | jq -r '.component.measures[]? | select(.metric=="ncloc") | .value // "0"' 2>/dev/null || echo "0")
+          F_BUGS=$(echo $FRONTEND | jq -r '.component.measures[]? | select(.metric=="bugs") | .value // "0"' 2>/dev/null || echo "0")
+          F_VULNS=$(echo $FRONTEND | jq -r '.component.measures[]? | select(.metric=="vulnerabilities") | .value // "0"' 2>/dev/null || echo "0")
+          F_HOTSPOTS=$(echo $FRONTEND | jq -r '.component.measures[]? | select(.metric=="security_hotspots") | .value // "0"' 2>/dev/null || echo "0")
+          F_SMELLS=$(echo $FRONTEND | jq -r '.component.measures[]? | select(.metric=="code_smells") | .value // "0"' 2>/dev/null || echo "0")
+          F_COV=$(echo $FRONTEND | jq -r '.component.measures[]? | select(.metric=="coverage") | .value // "0"' 2>/dev/null || echo "0")
+          F_DUP=$(echo $FRONTEND | jq -r '.component.measures[]? | select(.metric=="duplicated_lines_density") | .value // "0"' 2>/dev/null || echo "0")
+          
+          echo "| Métrica | Valor |" >> $GITHUB_STEP_SUMMARY
+          echo "|---------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| 📏 Líneas de Código | $F_LINES |" >> $GITHUB_STEP_SUMMARY
+          echo "| 🐛 Bugs | $F_BUGS |" >> $GITHUB_STEP_SUMMARY
+          echo "| 🔓 Vulnerabilidades | $F_VULNS |" >> $GITHUB_STEP_SUMMARY
+          echo "| 🔥 Security Hotspots | $F_HOTSPOTS |" >> $GITHUB_STEP_SUMMARY
+          echo "| 🔧 Code Smells | $F_SMELLS |" >> $GITHUB_STEP_SUMMARY
+          echo "| ✅ Cobertura | ${F_COV}% |" >> $GITHUB_STEP_SUMMARY
+          echo "| 📋 Código Duplicado | ${F_DUP}% |" >> $GITHUB_STEP_SUMMARY
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          # =============================================
+          # TOTALES
+          # =============================================
+          echo "### 📊 Total del Proyecto" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          TOTAL_LINES=$((${B_LINES:-0} + ${F_LINES:-0}))
+          TOTAL_BUGS=$((${B_BUGS:-0} + ${F_BUGS:-0}))
+          TOTAL_VULNS=$((${B_VULNS:-0} + ${F_VULNS:-0}))
+          TOTAL_SMELLS=$((${B_SMELLS:-0} + ${F_SMELLS:-0}))
+          
+          echo "| Métrica | Backend | Frontend | Total |" >> $GITHUB_STEP_SUMMARY
+          echo "|---------|---------|----------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| 📏 Líneas | $B_LINES | $F_LINES | **$TOTAL_LINES** |" >> $GITHUB_STEP_SUMMARY
+          echo "| 🐛 Bugs | $B_BUGS | $F_BUGS | **$TOTAL_BUGS** |" >> $GITHUB_STEP_SUMMARY
+          echo "| 🔓 Vulns | $B_VULNS | $F_VULNS | **$TOTAL_VULNS** |" >> $GITHUB_STEP_SUMMARY
+          echo "| 🔧 Smells | $B_SMELLS | $F_SMELLS | **$TOTAL_SMELLS** |" >> $GITHUB_STEP_SUMMARY
