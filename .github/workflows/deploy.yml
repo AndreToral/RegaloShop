@@ -1,10 +1,10 @@
-name: CD - Terraform Deploy/Destroy
+name: CD - Despliegue/Destrucción Terraform
 
 on:
   workflow_dispatch:
     inputs:
       action:
-        description: deploy | destroy (solo Terraform)
+        description: desplegar | destruir (solo Terraform)
         required: true
         type: choice
         default: deploy
@@ -27,6 +27,16 @@ on:
         description: Escribe DESTROY para confirmar destrucción (solo si action=destroy)
         required: true
         default: CANCEL
+      force_clean_secrets:
+        description: "Forzar eliminación de Secrets Manager en pending deletion state (ANTES de deploy)"
+        required: false
+        type: boolean
+        default: false
+      force_cleanup_tflock:
+        description: "Forzar limpieza de lock de Terraform (si está estancado)"
+        required: false
+        type: boolean
+        default: false
 
 env:
   AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
@@ -46,7 +56,7 @@ jobs:
     runs-on: ubuntu-latest
     environment: ${{ github.event.inputs.environment }}
     steps:
-      - name: Checkout
+      - name: Descargar código
         uses: actions/checkout@v4
 
       - name: Escribir terraform.tfvars (secret opcional)
@@ -66,7 +76,7 @@ jobs:
             echo "Usando terraform.tfvars del repo"
           fi
 
-      - name: Validar confirmación de destroy
+      - name: Validar confirmación de destrucción
         if: github.event.inputs.action == 'destroy'
         run: |
           if [ "${{ github.event.inputs.destroy_confirm }}" != "DESTROY" ]; then
@@ -74,13 +84,25 @@ jobs:
             exit 1
           fi
 
-      - name: Configure AWS credentials (OIDC)
+      - name: Configurar credenciales AWS (OIDC)
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: Setup Terraform
+      - name: 🧹 Limpieza forzada de Secrets Aurora (opcional)
+        if: github.event.inputs.force_clean_secrets == 'true'
+        run: |
+          chmod +x infra/scripts/cleanup-secrets.sh
+          ./infra/scripts/cleanup-secrets.sh tienda ${{ env.AWS_REGION }}
+
+      - name: 🔓 Limpieza forzada de Lock DynamoDB Terraform (opcional)
+        if: github.event.inputs.force_cleanup_tflock == 'true'
+        run: |
+          chmod +x infra/scripts/cleanup-tflock.sh
+          ./infra/scripts/cleanup-tflock.sh regaloshop-tflock regaloshop-tfstate/regaloshop/terraform.tfstate ${{ env.AWS_REGION }}
+
+      - name: Configurar Terraform
         uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: 1.6.6
@@ -89,11 +111,11 @@ jobs:
         working-directory: infra/terraform
         run: terraform init -input=false
 
-      - name: Terraform validate
+      - name: Terraform validar
         working-directory: infra/terraform
         run: terraform validate
 
-      - name: Terraform plan (deploy)
+      - name: Terraform plan (despliegue)
         if: github.event.inputs.action == 'deploy'
         working-directory: infra/terraform
         env:
@@ -102,7 +124,7 @@ jobs:
           TF_VAR_backend_image_tag: ${{ env.IMAGE_TAG }}
         run: terraform plan -input=false -out=tfplan
 
-      - name: Terraform apply (deploy)
+      - name: Terraform apply (despliegue)
         if: github.event.inputs.action == 'deploy' && github.event.inputs.terraform_action == 'apply'
         working-directory: infra/terraform
         env:
@@ -111,7 +133,7 @@ jobs:
           TF_VAR_backend_image_tag: ${{ env.IMAGE_TAG }}
         run: terraform apply -input=false -auto-approve tfplan
 
-      - name: Terraform plan destroy
+      - name: Terraform plan destrucción
         if: github.event.inputs.action == 'destroy'
         working-directory: infra/terraform
         env:
@@ -120,7 +142,7 @@ jobs:
           TF_VAR_backend_image_tag: latest
         run: terraform plan -destroy -input=false -out=tfdestroy.tfplan
 
-      - name: Terraform destroy
+      - name: Terraform destruir
         if: github.event.inputs.action == 'destroy'
         working-directory: infra/terraform
         env:
