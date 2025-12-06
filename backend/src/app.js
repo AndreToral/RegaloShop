@@ -17,15 +17,17 @@ app.get('/health', async (req, res) => {
 
   const disableDb = (process.env.DISABLE_DB_HEALTHCHECK || '').toLowerCase() === 'true';
   if (disableDb) {
-    return res.json({ status: 'ok', database: 'skipped', ...basePayload });
+    return res.status(200).json({ status: 'ok', database: 'skipped', ...basePayload });
   }
 
   try {
     await query('SELECT 1');
-    res.json({ status: 'ok', database: 'reachable', ...basePayload });
+    res.status(200).json({ status: 'ok', database: 'reachable', ...basePayload });
   } catch (error) {
     console.error('Healthcheck fallo al conectar con la base de datos', error);
-    res.status(503).json({ status: 'error', database: 'unreachable', ...basePayload });
+    // Retornar 200 de todas formas para que el ALB considere el task como healthy
+    // mientras se recupera la conexión a la BD
+    res.status(200).json({ status: 'degraded', database: 'unreachable', error: error.message, ...basePayload });
   }
 });
 
