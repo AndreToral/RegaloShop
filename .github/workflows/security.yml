@@ -33,7 +33,7 @@ jobs:
       - name: Ejecutar escaneo de Checkov (solo fallos)
         working-directory: infra/terraform
         run: |
-          echo "## 🔒 Fallos de Seguridad Detectados" >> $GITHUB_STEP_SUMMARY
+          echo "##  Fallos de Seguridad Detectados" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           
           # Ejecutar checkov y mostrar solo los fallos con detalle
@@ -42,7 +42,7 @@ jobs:
             --config-file .checkov.yaml \
             --output cli \
             --compact \
-            2>&1 | awk '/^Check:.*FAILED/{found=1} found{print; if(/^$/)found=0}' >> $GITHUB_STEP_SUMMARY || echo "✅ No se encontraron fallos" >> $GITHUB_STEP_SUMMARY
+            2>&1 | awk '/^Check:.*FAILED/{found=1} found{print; if(/^$/)found=0}' >> $GITHUB_STEP_SUMMARY || echo " No se encontraron fallos" >> $GITHUB_STEP_SUMMARY
 
       - name: Mostrar fallos en logs
         working-directory: infra/terraform
@@ -61,8 +61,8 @@ jobs:
           FAILED=$(checkov -d . --framework terraform --config-file .checkov.yaml --compact 2>&1 | grep -oP 'Failed checks: \K[0-9]+' || echo "0")
           echo "Checks fallidos: $FAILED"
           if [ "$FAILED" -gt 20 ]; then
-            echo "❌ Demasiados checks fallidos ($FAILED > 20)"
+            echo " Demasiados checks fallidos ($FAILED > 20)"
             exit 1
           else
-            echo "✅ Escaneo aprobado con $FAILED fallos aceptables"
+            echo " Escaneo aprobado con $FAILED fallos aceptables"
           fi
