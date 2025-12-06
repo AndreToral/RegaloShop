@@ -6,6 +6,56 @@ resource "aws_vpc" "main" {
   tags                 = { Name = "${local.name_prefix}-vpc" }
 }
 
+// Restrict default security group (CKV2_AWS_12)
+resource "aws_default_security_group" "default" {
+  vpc_id = aws_vpc.main.id
+  tags   = { Name = "${local.name_prefix}-default-sg-restricted" }
+}
+
+// VPC Flow Logs (CKV2_AWS_11)
+resource "aws_cloudwatch_log_group" "vpc_flow_logs" {
+  name              = "/aws/vpc/flowlogs/${local.name_prefix}"
+  retention_in_days = 365
+  kms_key_id        = aws_kms_key.logs.arn
+  tags              = { Name = "${local.name_prefix}-vpc-flow-logs" }
+}
+
+resource "aws_iam_role" "vpc_flow_logs" {
+  name = "${local.name_prefix}-vpc-flow-logs-role"
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Action = "sts:AssumeRole"
+      Effect = "Allow"
+      Principal = { Service = "vpc-flow-logs.amazonaws.com" }
+    }]
+  })
+}
+
+resource "aws_iam_role_policy" "vpc_flow_logs" {
+  name = "${local.name_prefix}-vpc-flow-logs-policy"
+  role = aws_iam_role.vpc_flow_logs.id
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Action = [
+        "logs:CreateLogStream",
+        "logs:PutLogEvents"
+      ]
+      Effect   = "Allow"
+      Resource = "${aws_cloudwatch_log_group.vpc_flow_logs.arn}:*"
+    }]
+  })
+}
+
+resource "aws_flow_log" "main" {
+  iam_role_arn    = aws_iam_role.vpc_flow_logs.arn
+  log_destination = aws_cloudwatch_log_group.vpc_flow_logs.arn
+  traffic_type    = "ALL"
+  vpc_id          = aws_vpc.main.id
+  tags            = { Name = "${local.name_prefix}-vpc-flow-log" }
+}
+
 // Internet Gateway para el tráfico de salida/entrada en subredes públicas
 resource "aws_internet_gateway" "igw" {
   vpc_id = aws_vpc.main.id
@@ -55,6 +105,7 @@ resource "aws_nat_gateway" "nat" {
   for_each      = aws_subnet.public
   allocation_id = aws_eip.nat[each.key].id
   subnet_id     = each.value.id
+  depends_on    = [aws_internet_gateway.igw]
   tags          = { Name = "${local.name_prefix}-nat-${each.key}" }
 }
 
@@ -83,7 +134,8 @@ resource "aws_route_table" "private" {
     cidr_block     = "0.0.0.0/0"
     nat_gateway_id = aws_nat_gateway.nat[each.key].id
   }
-  tags = { Name = "${local.name_prefix}-private-rt-${each.key}" }
+  depends_on = [aws_nat_gateway.nat]
+  tags       = { Name = "${local.name_prefix}-private-rt-${each.key}" }
 }
 
 // Asociación de subredes privadas a su tabla de rutas (una tabla por AZ para respetar el AZ affinity del NAT)
