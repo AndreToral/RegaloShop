@@ -17,18 +17,67 @@ locals {
 resource "aws_ecs_cluster" "az" {
   for_each = local.ecs_clusters
   name     = each.value.name
+
+  setting {
+    name  = "containerInsights"
+    value = "enabled"
+  }
 }
+
+// KMS key para CloudWatch Logs
+resource "aws_kms_key" "logs" {
+  description             = "KMS key for CloudWatch Logs encryption"
+  deletion_window_in_days = 10
+  enable_key_rotation     = true
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid    = "Enable IAM User Permissions"
+        Effect = "Allow"
+        Principal = { AWS = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:root" }
+        Action   = "kms:*"
+        Resource = "*"
+      },
+      {
+        Sid    = "Allow CloudWatch Logs"
+        Effect = "Allow"
+        Principal = { Service = "logs.${var.region}.amazonaws.com" }
+        Action = [
+          "kms:Encrypt*",
+          "kms:Decrypt*",
+          "kms:ReEncrypt*",
+          "kms:GenerateDataKey*",
+          "kms:Describe*"
+        ]
+        Resource = "*"
+        Condition = {
+          ArnLike = {
+            "kms:EncryptionContext:aws:logs:arn" = "arn:aws:logs:${var.region}:${data.aws_caller_identity.current.account_id}:*"
+          }
+        }
+      }
+    ]
+  })
+
+  tags = { Name = "${local.name_prefix}-logs-kms" }
+}
+
+data "aws_caller_identity" "current" {}
 
 // Logs de CloudWatch para el frontend
 resource "aws_cloudwatch_log_group" "frontend" {
   name              = "/ecs/${local.name_prefix}-frontend"
-  retention_in_days = 7
+  retention_in_days = 365
+  kms_key_id        = aws_kms_key.logs.arn
 }
 
 // Logs de CloudWatch para el backend
 resource "aws_cloudwatch_log_group" "backend" {
   name              = "/ecs/${local.name_prefix}-backend"
-  retention_in_days = 7
+  retention_in_days = 365
+  kms_key_id        = aws_kms_key.logs.arn
 }
 
 locals {
@@ -91,7 +140,7 @@ resource "aws_ecs_task_definition" "backend" {
       }
       environment = [
         { name = "PORT", value = tostring(var.backend_container_port) },
-        { name = "DISABLE_DB_HEALTHCHECK", value = "true" }
+        { name = "DISABLE_DB_HEALTHCHECK", value = "false" }
       ]
       secrets = [
         { name = "DATABASE_URL", valueFrom = aws_secretsmanager_secret.db_url.arn }
@@ -134,6 +183,11 @@ resource "aws_ecs_service" "frontend" {
     container_port   = var.frontend_container_port
   }
 
+  depends_on = [
+    aws_lb_listener.http,
+    aws_lb_target_group.frontend,
+  ]
+
   lifecycle { ignore_changes = [task_definition, desired_count] }
 }
 
@@ -170,6 +224,11 @@ resource "aws_ecs_service" "backend" {
     container_name   = "backend"
     container_port   = var.backend_container_port
   }
+
+  depends_on = [
+    aws_lb_listener_rule.api,
+    aws_lb_target_group.backend,
+  ]
 
   lifecycle { ignore_changes = [task_definition, desired_count] }
 }
