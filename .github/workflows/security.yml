@@ -1,0 +1,68 @@
+name: Escaneo de Seguridad (Checkov)
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'infra/terraform/**'
+  pull_request:
+    paths:
+      - 'infra/terraform/**'
+
+permissions:
+  contents: read
+
+jobs:
+  checkov:
+    name: Checkov – Seguridad de Infraestructura
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Descargar código
+        uses: actions/checkout@v4
+
+      - name: Configurar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Instalar Checkov
+        run: pip install checkov
+
+      - name: Ejecutar escaneo de Checkov (solo fallos)
+        working-directory: infra/terraform
+        run: |
+          echo "## 🔒 Fallos de Seguridad Detectados" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          # Ejecutar checkov y mostrar solo los fallos con detalle
+          checkov -d . \
+            --framework terraform \
+            --config-file .checkov.yaml \
+            --output cli \
+            --compact \
+            2>&1 | awk '/^Check:.*FAILED/{found=1} found{print; if(/^$/)found=0}' >> $GITHUB_STEP_SUMMARY || echo "✅ No se encontraron fallos" >> $GITHUB_STEP_SUMMARY
+
+      - name: Mostrar fallos en logs
+        working-directory: infra/terraform
+        run: |
+          echo "========== FALLOS DETECTADOS =========="
+          checkov -d . \
+            --framework terraform \
+            --config-file .checkov.yaml \
+            --output cli \
+            2>&1 | grep -E "FAILED|Check:|File:|Guide:" || echo "No hay fallos"
+          echo "========================================"
+
+      - name: Verificar cantidad de fallos
+        working-directory: infra/terraform
+        run: |
+          FAILED=$(checkov -d . --framework terraform --config-file .checkov.yaml --compact 2>&1 | grep -oP 'Failed checks: \K[0-9]+' || echo "0")
+          echo "Checks fallidos: $FAILED"
+          if [ "$FAILED" -gt 20 ]; then
+            echo "❌ Demasiados checks fallidos ($FAILED > 20)"
+            exit 1
+          else
+            echo "✅ Escaneo aprobado con $FAILED fallos aceptables"
+          fi
