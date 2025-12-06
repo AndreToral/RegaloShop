@@ -1,4 +1,4 @@
-name: 🗄️ Migraciones de Base de Datos (vía Bastion)
+name: Migraciones de Base de Datos (vía Bastion)
 
 on:
   workflow_dispatch:
@@ -30,7 +30,7 @@ concurrency:
 
 jobs:
   run-migrations:
-    name: 🚀 Ejecutar Migraciones vía Bastion
+    name:  Ejecutar Migraciones vía Bastion
     runs-on: ubuntu-latest
     environment: ${{ github.event.inputs.environment }}
     steps:
@@ -54,7 +54,7 @@ jobs:
             --output text)
           
           if [ "$BASTION_ID" = "None" ] || [ -z "$BASTION_ID" ]; then
-            echo "❌ Bastion host no encontrado o no está corriendo"
+            echo " Bastion host no encontrado o no está corriendo"
             exit 1
           fi
           
@@ -65,7 +65,7 @@ jobs:
           
           echo "bastion_id=$BASTION_ID" >> $GITHUB_OUTPUT
           echo "bastion_ip=$BASTION_IP" >> $GITHUB_OUTPUT
-          echo "✅ Bastion encontrado: $BASTION_IP ($BASTION_ID)"
+          echo " Bastion encontrado: $BASTION_IP ($BASTION_ID)"
 
       - name: Configurar clave SSH
         run: |
@@ -77,7 +77,7 @@ jobs:
           
           # Verificar que la clave se guardó correctamente
           if [ ! -f ~/.ssh/bastion_key.pem ]; then
-            echo "❌ Archivo de clave SSH no creado"
+            echo " Archivo de clave SSH no creado"
             exit 1
           fi
           
@@ -86,17 +86,17 @@ jobs:
           
           # Validar que la clave es válida
           if ! ssh-keygen -l -f ~/.ssh/bastion_key.pem > /dev/null 2>&1; then
-            echo "❌ Formato de clave SSH inválido"
+            echo " Formato de clave SSH inválido"
             cat ~/.ssh/bastion_key.pem | head -3
             exit 1
           fi
           
-          echo "✅ Clave SSH validada exitosamente"
+          echo " Clave SSH validada exitosamente"
           
           # Agregar host a known_hosts
           ssh-keyscan -H ${{ steps.bastion-info.outputs.bastion_ip }} >> ~/.ssh/known_hosts 2>/dev/null || true
           
-          echo "✅ Configuración SSH lista"
+          echo " Configuración SSH lista"
 
       - name: Configurar Node.js (para scripts de migración locales)
         uses: actions/setup-node@v4
@@ -105,25 +105,25 @@ jobs:
           cache: npm
           cache-dependency-path: backend/package-lock.json
 
-      - name: 🔍 Depurar configuración SSH
+      - name:  Depurar configuración SSH
         run: |
-          echo "🔍 Información de depuración de clave SSH:"
+          echo " Información de depuración de clave SSH:"
           echo "  Archivo existe: $(test -f ~/.ssh/bastion_key.pem && echo 'SÍ' || echo 'NO')"
           echo "  Tamaño archivo: $(stat -f%z ~/.ssh/bastion_key.pem 2>/dev/null || stat -c%s ~/.ssh/bastion_key.pem 2>/dev/null || echo 'N/A')"
           echo "  Permisos: $(ls -la ~/.ssh/bastion_key.pem 2>/dev/null | awk '{print $1}')"
           echo "  Primera línea: $(head -1 ~/.ssh/bastion_key.pem)"
           echo "  Última línea: $(tail -1 ~/.ssh/bastion_key.pem)"
           echo ""
-          echo "🔍 Versión SSH:"
+          echo " Versión SSH:"
           ssh -V
           echo ""
-          echo "🔍 Información del Bastion:"
+          echo " Información del Bastion:"
           echo "  IP: ${{ steps.bastion-info.outputs.bastion_ip }}"
           echo "  ID: ${{ steps.bastion-info.outputs.bastion_id }}"
 
       - name: Probar conectividad con Bastion
         run: |
-          ssh -i ~/.ssh/bastion_key.pem -o ConnectTimeout=10 ubuntu@${{ steps.bastion-info.outputs.bastion_ip }} "echo '✅ Conexión con Bastion exitosa'"
+          ssh -i ~/.ssh/bastion_key.pem -o ConnectTimeout=10 ubuntu@${{ steps.bastion-info.outputs.bastion_ip }} "echo ' Conexión con Bastion exitosa'"
 
       - name: Copiar migraciones al Bastion
         run: |
@@ -149,16 +149,16 @@ jobs:
       - name: Verificar archivos en Bastion
         run: |
           BASTION_IP="${{ steps.bastion-info.outputs.bastion_ip }}"
-          echo "🔍 Verificando archivos en Bastion..."
+          echo " Verificando archivos en Bastion..."
           ssh -i ~/.ssh/bastion_key.pem ubuntu@${BASTION_IP} << 'VERIFY'
           echo "Contenido de /tmp/regaloshop-backend/:"
           ls -la /tmp/regaloshop-backend/ || echo "Directorio no encontrado"
           echo ""
           echo "Verificando directorio src/:"
-          [ -d /tmp/regaloshop-backend/src ] && echo "✅ src/ existe" || echo "❌ src/ NO encontrado"
+          [ -d /tmp/regaloshop-backend/src ] && echo " src/ existe" || echo " src/ NO encontrado"
           echo ""
           echo "Verificando pool.js:"
-          [ -f /tmp/regaloshop-backend/src/db/pool.js ] && echo "✅ pool.js existe" || echo "❌ pool.js NO encontrado"
+          [ -f /tmp/regaloshop-backend/src/db/pool.js ] && echo " pool.js existe" || echo " pool.js NO encontrado"
           VERIFY
 
       - name: Ejecutar migraciones en Bastion
@@ -181,12 +181,12 @@ jobs:
             "/opt/regaloshop/run-seed.sh ${{ github.event.inputs.project_name }} ${{ env.AWS_REGION }} /tmp/regaloshop-backend/scripts/seedDatabase.js"
         continue-on-error: true
 
-      - name: 📋 Resumen de Migraciones
+      - name:  Resumen de Migraciones
         if: always()
         run: |
           echo ""
           echo "════════════════════════════════════════════"
-          echo "✅ MIGRACIONES DE BASE DE DATOS COMPLETADAS"
+          echo " MIGRACIONES DE BASE DE DATOS COMPLETADAS"
           echo "════════════════════════════════════════════"
           echo "Proyecto: ${{ github.event.inputs.project_name }}"
           echo "Ambiente: ${{ github.event.inputs.environment }}"
