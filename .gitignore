@@ -9,6 +9,8 @@
 *.tfstate
 *.tfstate.backup
 .terraform.lock.hcl
+GITHUB_ACTIONS_MIGRATION_SUMMARY.md
+GITHUB_WORKFLOWS_GUIDE.md
 
 # Dependencias y builds
 node_modules
