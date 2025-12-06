@@ -38,14 +38,40 @@ resource "aws_apigatewayv2_route" "proxy" {
   target    = "integrations/${aws_apigatewayv2_integration.alb[0].id}"
 }
 
+// CloudWatch Log Group for API Gateway access logs
+resource "aws_cloudwatch_log_group" "apigw" {
+  count             = var.enable_edge ? 1 : 0
+  name              = "/aws/apigateway/${local.name_prefix}-apigw"
+  retention_in_days = 365
+  kms_key_id        = aws_kms_key.logs.arn
+
+  tags = { Name = "${local.name_prefix}-apigw-logs" }
+}
+
 resource "aws_apigatewayv2_stage" "default" {
   count       = var.enable_edge ? 1 : 0
   api_id      = aws_apigatewayv2_api.edge[0].id
   name        = "$default"
   auto_deploy = true
 
+  access_log_settings {
+    destination_arn = aws_cloudwatch_log_group.apigw[0].arn
+    format = jsonencode({
+      requestId         = "$context.requestId"
+      ip                = "$context.identity.sourceIp"
+      requestTime       = "$context.requestTime"
+      httpMethod        = "$context.httpMethod"
+      routeKey          = "$context.routeKey"
+      status            = "$context.status"
+      protocol          = "$context.protocol"
+      responseLength    = "$context.responseLength"
+      integrationError  = "$context.integrationErrorMessage"
+      integrationStatus = "$context.integrationStatus"
+    })
+  }
+
   default_route_settings {
-    throttling_burst_limit = 2000
-    throttling_rate_limit  = 1000
+    throttling_burst_limit = 300
+    throttling_rate_limit  = 200
   }
 }
