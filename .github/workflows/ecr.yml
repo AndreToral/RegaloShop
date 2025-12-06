@@ -1,8 +1,16 @@
-name: ECR Build & Push (Ansible)
+name: ECR Construcción y Publicación (Ansible)
 
 on:
   workflow_dispatch:
     inputs:
+      action:
+        description: "Acción a realizar"
+        required: true
+        default: "build"
+        type: choice
+        options:
+          - build
+          - delete
       environment:
         description: Environment de GitHub (inyecta secrets/vars AWS)
         required: true
@@ -16,11 +24,11 @@ on:
         default: tienda
       frontend_api_url:
         description: VITE_API_URL para el build del frontend
-        required: true
+        required: false
         default: /api
       update_ecs:
         description: "si/no: forzar despliegue en ECS desde Ansible"
-        required: true
+        required: false
         default: "no"
       ecs_cluster_name:
         description: Nombre del cluster ECS (si update_ecs=si)
@@ -47,21 +55,25 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # =========================================================================
+  # JOB: Construir y publicar imágenes ECR
+  # =========================================================================
   ecr_ansible:
-    name: Build/Push imágenes ECR (Ansible)
+    name: Construir/Publicar imágenes ECR (Ansible)
     runs-on: ubuntu-latest
     environment: ${{ github.event.inputs.environment }}
+    if: ${{ github.event.inputs.action == 'build' }}
     steps:
-      - name: Checkout
+      - name: Descargar código
         uses: actions/checkout@v4
 
-      - name: Configure AWS credentials (OIDC)
+      - name: Configurar credenciales AWS (OIDC)
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: Install Ansible
+      - name: Instalar Ansible
         run: |
           python -m pip install --upgrade pip
           pip install ansible-core
@@ -78,3 +90,59 @@ jobs:
           ecs_cluster_name=${{ github.event.inputs.ecs_cluster_name }} \
           ecs_service_frontend=${{ github.event.inputs.ecs_service_frontend }} \
           ecs_service_backend=${{ github.event.inputs.ecs_service_backend }}" 
+
+  # =========================================================================
+  # JOB: Vaciar y eliminar repositorios ECR
+  # =========================================================================
+  ecr_delete:
+    name:  Vaciar y eliminar ECR
+    runs-on: ubuntu-latest
+    environment: ${{ github.event.inputs.environment }}
+    if: ${{ github.event.inputs.action == 'delete' }}
+    steps:
+      - name: Configurar credenciales AWS (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name:  Vaciar y eliminar repositorios ECR
+        env:
+          PROJECT_NAME: ${{ github.event.inputs.project_name }}
+        run: |
+          echo "##  Eliminación de repositorios ECR" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          REPOS=("${PROJECT_NAME}-frontend" "${PROJECT_NAME}-backend")
+          
+          for REPO in "${REPOS[@]}"; do
+            echo "### Procesando: $REPO" >> $GITHUB_STEP_SUMMARY
+            
+            # Verificar si el repositorio existe
+            if aws ecr describe-repositories --repository-names "$REPO" --region ${{ env.AWS_REGION }} 2>/dev/null; then
+              
+              # Contar imágenes antes de eliminar
+              IMAGE_COUNT=$(aws ecr list-images --repository-name "$REPO" --region ${{ env.AWS_REGION }} --query 'imageIds | length(@)' --output text 2>/dev/null || echo "0")
+              echo "-  Imágenes encontradas: $IMAGE_COUNT" >> $GITHUB_STEP_SUMMARY
+              
+              # Eliminar todas las imágenes del repositorio
+              if [ "$IMAGE_COUNT" -gt 0 ]; then
+                echo "Eliminando $IMAGE_COUNT imágenes de $REPO..."
+                IMAGES=$(aws ecr list-images --repository-name "$REPO" --region ${{ env.AWS_REGION }} --query 'imageIds[*]' --output json)
+                aws ecr batch-delete-image --repository-name "$REPO" --region ${{ env.AWS_REGION }} --image-ids "$IMAGES" || true
+                echo "-  Imágenes eliminadas" >> $GITHUB_STEP_SUMMARY
+              fi
+              
+              # Eliminar el repositorio
+              echo "Eliminando repositorio $REPO..."
+              aws ecr delete-repository --repository-name "$REPO" --region ${{ env.AWS_REGION }} --force
+              echo "-  Repositorio **$REPO** eliminado" >> $GITHUB_STEP_SUMMARY
+              
+            else
+              echo "-  Repositorio **$REPO** no existe" >> $GITHUB_STEP_SUMMARY
+            fi
+            
+            echo "" >> $GITHUB_STEP_SUMMARY
+          done
+          
+          echo "###  Proceso completado" >> $GITHUB_STEP_SUMMARY
