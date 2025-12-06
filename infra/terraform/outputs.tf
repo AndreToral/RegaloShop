@@ -16,8 +16,13 @@ output "cloudfront_domain_name" {
 }
 
 output "route53_zone_id" {
-  value       = var.enable_edge && length(aws_route53_zone.main) > 0 ? aws_route53_zone.main[0].zone_id : null
-  description = "Hosted zone ID (null si edge deshabilitado)"
+  value       = var.enable_edge && length(data.aws_route53_zone.main) > 0 ? data.aws_route53_zone.main[0].zone_id : null
+  description = "Hosted zone ID (existing Route53 zone)"
+}
+
+output "route53_nameservers" {
+  value       = var.enable_edge && length(data.aws_route53_zone.main) > 0 ? data.aws_route53_zone.main[0].name_servers : []
+  description = "Route53 nameservers - you already have these from the existing zone"
 }
 
 output "api_gateway_endpoint" {
