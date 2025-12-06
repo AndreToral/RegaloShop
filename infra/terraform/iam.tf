@@ -28,13 +28,26 @@ resource "aws_iam_role_policy" "ecs_task_read_db_secret" {
   role = aws_iam_role.ecs_task_execution.id
   policy = jsonencode({
     Version = "2012-10-17",
-    Statement = [{
-      Effect = "Allow",
-      Action = ["secretsmanager:GetSecretValue"],
-      Resource = [
-        aws_secretsmanager_secret.db_url.arn,
-        aws_secretsmanager_secret.db_credentials.arn
-      ]
-    }]
+    Statement = [
+      {
+        Effect = "Allow",
+        Action = ["secretsmanager:GetSecretValue"],
+        Resource = [
+          aws_secretsmanager_secret.db_url.arn,
+          aws_secretsmanager_secret.db_credentials.arn
+        ]
+      },
+      {
+        Sid    = "AllowKMSDecrypt"
+        Effect = "Allow"
+        Action = [
+          "kms:Decrypt",
+          "kms:DescribeKey"
+        ]
+        Resource = [
+          aws_kms_key.secrets.arn
+        ]
+      }
+    ]
   })
 }
